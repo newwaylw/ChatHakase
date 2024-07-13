@@ -1,0 +1,4 @@
+slack_bolt>=1.19.0
+python-dotenv
+aiohttp
+openai
