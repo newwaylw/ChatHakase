@@ -22,6 +22,58 @@ load_dotenv(env_path)
 app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
+@app.command("/deep")
+async def handle_deep_command(ack, body, client, logger):
+    """
+    Handle /deep slash command for deep research queries.
+    """
+    await ack()
+    
+    try:
+        # Get command details
+        user_id = body["user_id"]
+        channel_id = body["channel_id"]
+        text = body.get("text", "").strip()
+        
+        # Get user info
+        response = await client.users_info(user=user_id)
+        user_name = response["user"].get("real_name", response["user"].get("display_name", "Unknown"))
+        
+        if not text:
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Please provide a query after the /deep command. Example: `/deep What are the latest developments in quantum computing?`"
+            )
+            return
+        
+        # Post initial message to start the thread
+        initial_response = await client.chat_postMessage(
+            channel=channel_id,
+            text=f"🔬 Starting deep research for: {text}"
+        )
+        
+        thread_ts = initial_response["ts"]
+        
+        # Process with deep research
+        await process_deep_research_streaming(
+            content=text,
+            client=client,
+            channel=channel_id,
+            timestamp=thread_ts,
+            user_id=user_id,
+            user_name=user_name
+        )
+        
+    except Exception as e:
+        logger.error(f"Error handling /deep command: {e}")
+        await client.chat_postEphemeral(
+            channel=body["channel_id"],
+            user=body["user_id"],
+            text=f"Sorry, I encountered an error processing your deep research request: {str(e)}"
+        )
+
+
 @app.event("app_mention")
 @app.event('message')
 async def handle_mentions(event, client, payload):
