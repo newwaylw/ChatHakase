@@ -9,6 +9,7 @@ A chatbot based on Slack API and OpenAI API with streaming responses and convers
 - 🛠️ **Session Management**: Automatic session creation, tracking, and cleanup
 - 📊 **Admin Commands**: Session info, clearing, and statistics
 - 🚨 **Error Handling**: Robust error handling and fallback mechanisms
+- 🔬 **Deep Research Mode**: Advanced AI analysis using OpenAI's deep research model
 
 ## How Chat Sessions Work
 - **New Conversation**: Mention the bot or send a DM to start a new chat session
@@ -42,6 +43,14 @@ What are decorators?
 > [Remembers you're asking about Python] Decorators in Python are...
 ```
 
+### Deep Research Mode
+```
+@ChatHakase /deep What are the latest developments in quantum computing and their potential impact on cryptography?
+> 🔬 Deep Research Results
+> 
+> [Comprehensive analysis with detailed research findings...]
+```
+
 ### Special Commands
 - `session info` - Show current session details
 - `clear session` - Reset conversation history for this thread
@@ -51,6 +60,7 @@ What are decorators?
 ## Testing
 - **Session Management**: Run `python test_sessions.py` to test session functionality
 - **OpenAI Streaming**: Run `python test_streaming.py` to test OpenAI streaming without Slack
+- **Deep Research**: Run `python test_deep_research.py` to test deep research functionality
 
 ## Architecture
 

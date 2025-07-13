@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from assistant import (
     process_request_streaming, 
+    process_deep_research_streaming,
     get_session_info, 
     clear_session, 
     get_all_sessions_info
@@ -54,6 +55,41 @@ async def handle_mentions(event, client, payload):
         # Handle special commands
         if await handle_special_commands(text, client, event, user_name):
             # Remove eyes reaction when done with command
+            await client.reactions_remove(
+                channel=event["channel"],
+                timestamp=event["ts"],
+                name="eyes",
+            )
+            return
+        
+        # Handle /deep command for deep research
+        if text.strip().lower().startswith('/deep'):
+            deep_query = text[5:].strip()  # Remove '/deep' prefix
+            if not deep_query:
+                await client.chat_postMessage(
+                    channel=event["channel"],
+                    text="Please provide a query after the /deep command. Example: `/deep What are the latest developments in quantum computing?`",
+                    thread_ts=event.get('thread_ts', event['ts'])
+                )
+                await client.reactions_remove(
+                    channel=event["channel"],
+                    timestamp=event["ts"],
+                    name="eyes",
+                )
+                return
+            
+            # Process with deep research
+            from assistant import process_deep_research_streaming
+            await process_deep_research_streaming(
+                content=deep_query,
+                client=client,
+                channel=event["channel"],
+                timestamp=thread_ts,
+                user_id=user_id,
+                user_name=user_name
+            )
+            
+            # Remove eyes reaction when done
             await client.reactions_remove(
                 channel=event["channel"],
                 timestamp=event["ts"],
@@ -155,6 +191,7 @@ async def handle_special_commands(text: str, client, event, user_name: str) -> b
 **Chat Commands:**
 • Just mention me or send a message to start chatting
 • Continue the conversation in the same thread for context
+• `/deep <query>` - Use deep research AI for complex questions
 
 **Session Commands:**
 • `session info` - Show current session details
@@ -167,6 +204,7 @@ async def handle_special_commands(text: str, client, event, user_name: str) -> b
 🔄 Real-time streaming responses
 🧵 Thread-based chat sessions
 ⚡ Automatic session cleanup
+🔬 Deep research mode for complex queries
         """
         await client.chat_postMessage(
             channel=channel,

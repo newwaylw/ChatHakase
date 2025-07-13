@@ -324,7 +324,132 @@ def get_all_sessions_info() -> str:
     return info
 
 
-def process_request(content, role=Roles.ASSISTANT.value, model_name="gpt-4o"):
+async def process_deep_research_streaming(content, client, channel, timestamp, user_id=None, user_name=None):
+    """
+    Process request with OpenAI's deep research model using the responses API.
+    This uses the o4-mini-deep-research model for complex research queries.
+    
+    Args:
+        content: The user's research query
+        client: Slack client for API calls
+        channel: Slack channel ID
+        timestamp: Message timestamp for updates (used as thread_ts)
+        user_id: Slack user ID
+        user_name: User's display name
+    """
+    message_ts = None
+    thread_ts = timestamp
+    
+    try:
+        # Clean up expired sessions periodically
+        if len(session_manager.sessions) > 10:
+            cleaned = session_manager.cleanup_expired_sessions()
+            if cleaned > 0:
+                logger.info(f"Cleaned up {cleaned} expired sessions")
+        
+        # Add user message to session with deep research indicator
+        session = session_manager.add_user_message(
+            channel_id=channel,
+            thread_ts=thread_ts,
+            content=f"[DEEP RESEARCH] {content}",
+            user_id=user_id,
+            user_name=user_name
+        )
+        
+        logger.info(f"Processing deep research request in session {session.session_id}")
+        
+        # Post initial "deep research" message in thread
+        response = await client.chat_postMessage(
+            channel=channel,
+            text="🔬 Starting deep research analysis...",
+            thread_ts=thread_ts
+        )
+        message_ts = response["ts"]
+        
+        logger.debug(f"Sending deep research request to o4-mini-deep-research")
+        
+        # Use the responses API for deep research model
+        openai_client = openai.Client()
+        
+        # Create the deep research request
+        response = openai_client.responses.create(
+            model="o4-mini-deep-research",
+            input=content,
+            stream=True,
+            tools=[{"type": "web_search_preview"}]
+        )
+        
+        # Initialize response tracking
+        full_response = ""
+        last_update_time = time.time()
+        update_interval = 1.0  # Update every 1 second for deep research
+        chunk_count = 0
+        
+        # Process streaming chunks
+        for chunk in response:
+            if hasattr(chunk, 'text') and chunk.text:
+                full_response += chunk.text
+                chunk_count += 1
+                
+                # Update message periodically to show progress
+                current_time = time.time()
+                if current_time - last_update_time >= update_interval:
+                    try:
+                        # Show progress with research indicator
+                        progress_text = full_response + "\n\n🔬 *Deep research in progress...*"
+                        await client.chat_update(
+                            channel=channel,
+                            ts=message_ts,
+                            text=progress_text
+                        )
+                        last_update_time = current_time
+                    except Exception as e:
+                        logger.warning(f"Error updating deep research message: {e}")
+        
+        # Final update with complete response
+        if full_response.strip():
+            # Add a header to indicate this was a deep research response
+            final_response = f"🔬 **Deep Research Results**\n\n{full_response}"
+            
+            await client.chat_update(
+                channel=channel,
+                ts=message_ts,
+                text=final_response
+            )
+            
+            # Add assistant response to session
+            session_manager.add_assistant_message(
+                channel_id=channel,
+                thread_ts=thread_ts,
+                content=final_response
+            )
+            
+            logger.info(f"✅ Deep research complete: {chunk_count} chunks, {len(full_response)} characters")
+            logger.info(f"Session now has {len(session.messages)} total messages")
+        else:
+            error_msg = "Sorry, I couldn't complete the deep research analysis. Please try again with a more specific query."
+            await client.chat_update(
+                channel=channel,
+                ts=message_ts,
+                text=error_msg
+            )
+            
+    except openai.RateLimitError as e:
+        error_msg = "🔬 Deep research is currently experiencing high demand. Please try again in a moment."
+        logger.error(f"OpenAI rate limit error in deep research: {e}")
+        await _post_error_message(client, channel, thread_ts, message_ts, error_msg)
+        
+    except openai.APIError as e:
+        error_msg = "🔬 I'm having trouble connecting to the deep research service. Please try again."
+        logger.error(f"OpenAI API error in deep research: {e}")
+        await _post_error_message(client, channel, thread_ts, message_ts, error_msg)
+        
+    except Exception as e:
+        error_msg = f"🔬 Sorry, I encountered an error during deep research: {str(e)}"
+        logger.error(f"Unexpected error in deep research: {e}")
+        await _post_error_message(client, channel, thread_ts, message_ts, error_msg)
+
+
     """
     Legacy non-streaming function for backward compatibility.
     Note: This doesn't use session management - use process_request_streaming instead.
