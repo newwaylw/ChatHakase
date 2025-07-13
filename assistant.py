@@ -326,8 +326,8 @@ def get_all_sessions_info() -> str:
 
 async def process_deep_research_streaming(content, client, channel, timestamp, user_id=None, user_name=None):
     """
-    Process request with OpenAI's deep research model using the responses API.
-    This uses the o4-mini-deep-research model for complex research queries.
+    Process request with OpenAI's deep research model.
+    This uses the o1-mini model for complex research queries with enhanced reasoning.
     
     Args:
         content: The user's research query
@@ -366,18 +366,53 @@ async def process_deep_research_streaming(content, client, channel, timestamp, u
         )
         message_ts = response["ts"]
         
-        logger.debug(f"Sending deep research request to o4-mini-deep-research")
+        logger.debug(f"Sending deep research request to o1-mini")
         
-        # Use the responses API for deep research model
+        # Create enhanced user message for deep research (o1-mini doesn't support system messages)
+        enhanced_content = f"""Please provide a comprehensive, well-researched response with detailed analysis, multiple perspectives, and thorough explanations. Include relevant context, implications, and connections to related topics.
+
+Research Query: {content}"""
+        
+        research_messages = [
+            {
+                "role": "user", 
+                "content": enhanced_content
+            }
+        ]
+        
+        # Use the standard chat completions API with o1-mini model
         openai_client = openai.Client()
         
-        # Create the deep research request
-        response = openai_client.responses.create(
-            model="o4-mini-deep-research",
-            input=content,
-            stream=True,
-            tools=[{"type": "web_search_preview"}]
-        )
+        try:
+            # Try o1-mini first
+            stream = openai_client.chat.completions.create(
+                model="o1-mini",
+                messages=research_messages,
+                stream=True
+            )
+        except openai.APIError as e:
+            if "model" in str(e).lower():
+                # Fallback to GPT-4 if o1-mini is not available
+                logger.info("o1-mini not available, falling back to GPT-4")
+                research_messages = [
+                    {
+                        "role": "system",
+                        "content": "You are a deep research assistant. Provide comprehensive, well-researched responses with detailed analysis, multiple perspectives, and thorough explanations. Include relevant context, implications, and connections to related topics."
+                    },
+                    {
+                        "role": "user", 
+                        "content": content
+                    }
+                ]
+                stream = openai_client.chat.completions.create(
+                    model="gpt-4",
+                    messages=research_messages,
+                    stream=True,
+                    max_tokens=4000,
+                    temperature=0.3
+                )
+            else:
+                raise e
         
         # Initialize response tracking
         full_response = ""
@@ -386,9 +421,10 @@ async def process_deep_research_streaming(content, client, channel, timestamp, u
         chunk_count = 0
         
         # Process streaming chunks
-        for chunk in response:
-            if hasattr(chunk, 'text') and chunk.text:
-                full_response += chunk.text
+        for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                content_chunk = chunk.choices[0].delta.content
+                full_response += content_chunk
                 chunk_count += 1
                 
                 # Update message periodically to show progress
@@ -450,9 +486,18 @@ async def process_deep_research_streaming(content, client, channel, timestamp, u
         await _post_error_message(client, channel, thread_ts, message_ts, error_msg)
 
 
+def process_request_non_streaming(content, role="user", model_name="gpt-4o"):
     """
     Legacy non-streaming function for backward compatibility.
     Note: This doesn't use session management - use process_request_streaming instead.
+    
+    Args:
+        content: The message content
+        role: The role for the message (default: "user")
+        model_name: OpenAI model to use (default: "gpt-4o")
+    
+    Returns:
+        String response from OpenAI
     """
     try:
         response = openai.Client().chat.completions.create(
