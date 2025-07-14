@@ -7,6 +7,8 @@ from pathlib import Path
 from assistant import (
     process_request_streaming, 
     process_deep_research_streaming,
+    process_image_with_text_streaming,
+    generate_image_streaming,
     get_session_info, 
     clear_session, 
     get_all_sessions_info
@@ -74,11 +76,115 @@ async def handle_deep_command(ack, body, client, logger):
         )
 
 
+@app.command("/generate")
+async def handle_generate_command(ack, body, client, logger):
+    """
+    Handle /generate slash command for image generation.
+    """
+    await ack()
+    
+    try:
+        # Get command details
+        user_id = body["user_id"]
+        channel_id = body["channel_id"]
+        text = body.get("text", "").strip()
+        
+        # Get user info
+        response = await client.users_info(user=user_id)
+        user_name = response["user"].get("real_name", response["user"].get("display_name", "Unknown"))
+        
+        if not text:
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Please provide a description after the /generate command. Example: `/generate a sunset over mountains`"
+            )
+            return
+        
+        # Post initial message to start the thread
+        initial_response = await client.chat_postMessage(
+            channel=channel_id,
+            text=f"🎨 Generating image: {text}"
+        )
+        
+        thread_ts = initial_response["ts"]
+        
+        # Process image generation
+        await generate_image_streaming(
+            prompt=text,
+            client=client,
+            channel=channel_id,
+            timestamp=thread_ts,
+            user_id=user_id,
+            user_name=user_name
+        )
+        
+    except Exception as e:
+        logger.error(f"Error handling /generate command: {e}")
+        await client.chat_postEphemeral(
+            channel=body["channel_id"],
+            user=body["user_id"],
+            text=f"Sorry, I encountered an error generating the image: {str(e)}"
+        )
+
+
+@app.command("/image")
+async def handle_image_command(ack, body, client, logger):
+    """
+    Handle /image slash command for image generation (alternative to /generate).
+    """
+    await ack()
+    
+    try:
+        # Get command details
+        user_id = body["user_id"]
+        channel_id = body["channel_id"]
+        text = body.get("text", "").strip()
+        
+        # Get user info
+        response = await client.users_info(user=user_id)
+        user_name = response["user"].get("real_name", response["user"].get("display_name", "Unknown"))
+        
+        if not text:
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Please provide a description after the /image command. Example: `/image a cute cat wearing a space helmet`"
+            )
+            return
+        
+        # Post initial message to start the thread
+        initial_response = await client.chat_postMessage(
+            channel=channel_id,
+            text=f"🎨 Generating image: {text}"
+        )
+        
+        thread_ts = initial_response["ts"]
+        
+        # Process image generation
+        await generate_image_streaming(
+            prompt=text,
+            client=client,
+            channel=channel_id,
+            timestamp=thread_ts,
+            user_id=user_id,
+            user_name=user_name
+        )
+        
+    except Exception as e:
+        logger.error(f"Error handling /image command: {e}")
+        await client.chat_postEphemeral(
+            channel=body["channel_id"],
+            user=body["user_id"],
+            text=f"Sorry, I encountered an error generating the image: {str(e)}"
+        )
+
+
 @app.event("app_mention")
 @app.event('message')
 async def handle_mentions(event, client, payload):
     """
-    Handle mentions and messages with streaming responses and session management.
+    Handle mentions and messages with streaming responses, session management, and image support.
     """
     try:
         # Skip bot messages to avoid loops
@@ -136,6 +242,79 @@ async def handle_mentions(event, client, payload):
                 content=deep_query,
                 client=client,
                 channel=event["channel"],
+                timestamp=event.get('thread_ts', event['ts']),
+                user_id=user_id,
+                user_name=user_name
+            )
+            
+            # Remove eyes reaction when done
+            await client.reactions_remove(
+                channel=event["channel"],
+                timestamp=event["ts"],
+                name="eyes",
+            )
+            return
+        
+        # Handle /generate or /image command for image generation
+        if text.strip().lower().startswith(('/generate', '/image')):
+            # Extract command and prompt
+            if text.strip().lower().startswith('/generate'):
+                prompt = text[9:].strip()  # Remove '/generate' prefix
+            else:
+                prompt = text[6:].strip()  # Remove '/image' prefix
+                
+            if not prompt:
+                await client.chat_postMessage(
+                    channel=event["channel"],
+                    text="Please provide a description after the command. Example: `/generate a sunset over mountains`",
+                    thread_ts=event.get('thread_ts', event['ts'])
+                )
+                await client.reactions_remove(
+                    channel=event["channel"],
+                    timestamp=event["ts"],
+                    name="eyes",
+                )
+                return
+            
+            # Process image generation
+            await generate_image_streaming(
+                prompt=prompt,
+                client=client,
+                channel=event["channel"],
+                timestamp=event.get('thread_ts', event['ts']),
+                user_id=user_id,
+                user_name=user_name
+            )
+            
+            # Remove eyes reaction when done
+            await client.reactions_remove(
+                channel=event["channel"],
+                timestamp=event["ts"],
+                name="eyes",
+            )
+            return
+        
+        # Check for uploaded files (images)
+        files = event.get('files', [])
+        image_files = []
+        
+        for file in files:
+            # Check if file is an image
+            if file.get('mimetype', '').startswith('image/'):
+                image_files.append(file)
+        
+        # Determine thread timestamp
+        thread_ts = event.get('thread_ts', event['ts'])
+        
+        # Handle image analysis if images are present
+        if image_files:
+            logger.info(f"Processing {len(image_files)} images from {user_name} in thread {thread_ts}")
+            
+            await process_image_with_text_streaming(
+                content=text,
+                image_files=image_files,
+                client=client,
+                channel=event["channel"],
                 timestamp=thread_ts,
                 user_id=user_id,
                 user_name=user_name
@@ -149,7 +328,7 @@ async def handle_mentions(event, client, payload):
             )
             return
         
-        # Skip empty messages
+        # Skip empty messages (no text and no images)
         if not text.strip():
             await client.reactions_remove(
                 channel=event["channel"],
@@ -158,12 +337,7 @@ async def handle_mentions(event, client, payload):
             )
             return
         
-        # Determine thread timestamp
-        # If this is a reply in a thread, use the thread_ts
-        # If this is a new message, use the message ts as the thread starter
-        thread_ts = event.get('thread_ts', event['ts'])
-        
-        logger.info(f"Processing message from {user_name} in thread {thread_ts}")
+        logger.info(f"Processing text message from {user_name} in thread {thread_ts}")
         
         # Process with streaming response and session management
         await process_request_streaming(
@@ -245,6 +419,11 @@ async def handle_special_commands(text: str, client, event, user_name: str) -> b
 • Continue the conversation in the same thread for context
 • `/deep <query>` - Use deep research AI for complex questions
 
+**Image Commands:**
+• Upload images with text to analyze them 🖼️
+• `/generate <description>` - Generate images with DALL-E 🎨
+• `/image <description>` - Alternative command for image generation
+
 **Session Commands:**
 • `session info` - Show current session details
 • `clear session` - Reset conversation history for this thread
@@ -257,6 +436,8 @@ async def handle_special_commands(text: str, client, event, user_name: str) -> b
 🧵 Thread-based chat sessions
 ⚡ Automatic session cleanup
 🔬 Deep research mode for complex queries
+🖼️ Image analysis and vision capabilities
+🎨 AI image generation with DALL-E
         """
         await client.chat_postMessage(
             channel=channel,
