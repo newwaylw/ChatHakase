@@ -539,7 +539,7 @@ def resize_image_if_needed(image_bytes: bytes, max_size: int = 2048) -> tuple[by
 
 
 async def process_image_with_text_streaming(content: str, image_files: list, client, channel: str, timestamp: str, 
-                                          user_id: str = None, user_name: str = None, model_name: str = "gpt-4o"):
+                                          user_id: str = None, user_name: str = None, model_name: str = "gpt-4o", image_detail="low"):
     """
     Process request with both text and images using streaming response.
     
@@ -601,7 +601,7 @@ async def process_image_with_text_streaming(content: str, image_files: list, cli
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:{mime_type};base64,{base64_image}",
-                        "detail": "high"
+                        "detail": image_detail
                     }
                 })
                 

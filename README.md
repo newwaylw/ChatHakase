@@ -81,6 +81,7 @@ What are decorators?
 - **OpenAI Streaming**: Run `python test_streaming.py` to test OpenAI streaming without Slack
 - **Deep Research**: Run `python test_deep_research.py` to test deep research functionality
 - **Image Features**: Run `python test_image_features.py` to test image processing and generation
+- **Improved Image Command**: Run `python test_improved_image_command.py` to test the enhanced /image command
 
 ## Architecture
 
@@ -118,17 +119,23 @@ What are decorators?
 
 ## New Image Commands
 
-### Image Analysis Commands
-- Upload any image file to Slack and mention the bot
-- Add text with your image to ask specific questions
-- Supports JPEG, PNG, GIF, and other common image formats
-
 ### Image Generation Commands
-- `/generate <description>` - Generate an image using DALL-E 3
-- `/image <description>` - Alternative command for image generation
+- `/image <description>` - Smart image command (generates or analyzes based on context)
+- `/image generate <description>` - Explicitly generate an image using DALL-E 3
+- `/image create <description>` - Alternative explicit generation command
+- `/generate <description>` - Legacy generation command
 - Examples:
-  - `/generate a futuristic cityscape at night`
-  - `/image a cute cat wearing a space helmet`
+  - `/image a futuristic cityscape at night`
+  - `/image generate a cute cat wearing a space helmet`
+
+### Image Analysis Commands  
+- Upload any image file to Slack and mention the bot
+- `/image <question>` - Analyze recently uploaded images (auto-detected)
+- `/image analyze <question>` - Explicitly analyze uploaded images
+- `/image describe <question>` - Alternative explicit analysis command
+- Examples:
+  - Upload image → `/image what do you see in this screenshot?`
+  - Upload diagram → `/image analyze explain this flowchart`
 
 ## Documentation
 - **[Chat Sessions Guide](CHAT_SESSIONS.md)**: Detailed documentation about session functionality
