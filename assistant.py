@@ -412,24 +412,206 @@ def process_request_non_streaming(content, role="user", model_name="gpt-4o"):
         return f"Sorry, I encountered an error: {str(e)}"
 
 
-async def download_slack_file(file_url: str, token: str) -> bytes:
+# async def download_slack_file(file_url: str, token: str) -> bytes:
+#     """
+#     Download a file from Slack using the bot token.
+#
+#     Args:
+#         file_url: The URL of the file to download
+#         token: Slack bot token for authentication
+#
+#     Returns:
+#         File content as bytes
+#     """
+#     headers = {
+#         'Authorization': f'Bearer {token}'
+#     }
+#
+#     try:
+#         # Use requests with proper error handling and redirect following
+#         response = requests.get(file_url, headers=headers, allow_redirects=True, timeout=30)
+#         response.raise_for_status()
+#
+#         # Log response details for debugging
+#         logger.debug(f"Downloaded file: {len(response.content)} bytes, Content-Type: {response.headers.get('content-type', 'unknown')}")
+#
+#         # Verify we got actual file content, not a redirect page
+#         content_type = response.headers.get('content-type', '').lower()
+#         if 'text/html' in content_type and len(response.content) < 10000:
+#             # This might be an error page or redirect, log the content for debugging
+#             logger.warning(f"Received HTML response instead of file content: {response.text[:500]}")
+#             raise Exception(f"Received HTML response instead of file content. Content-Type: {content_type}")
+#
+#         # Ensure we return bytes, not string
+#         if isinstance(response.content, str):
+#             logger.warning("Response content is string, converting to bytes")
+#             return response.content.encode('utf-8')
+#
+#         return response.content
+#
+#     except requests.exceptions.RequestException as e:
+#         logger.error(f"Error downloading file from {file_url}: {e}")
+#         raise Exception(f"Failed to download file: {str(e)}")
+#     except Exception as e:
+#         logger.error(f"Unexpected error downloading file: {e}")
+#         raise
+
+
+def debug_file_info(file_info: dict) -> None:
     """
-    Download a file from Slack using the bot token.
+    Debug helper to log file information structure.
     
     Args:
-        file_url: The URL of the file to download
-        token: Slack bot token for authentication
+        file_info: Slack file object
+    """
+    logger.debug("=== FILE INFO DEBUG ===")
+    logger.debug(f"File name: {file_info.get('name', 'N/A')}")
+    logger.debug(f"File size: {file_info.get('size', 'N/A')} bytes")
+    logger.debug(f"MIME type: {file_info.get('mimetype', 'N/A')}")
+    logger.debug(f"File type: {file_info.get('filetype', 'N/A')}")
+    
+    # Log all URL-related fields
+    url_fields = [k for k in file_info.keys() if 'url' in k.lower()]
+    logger.debug(f"Available URL fields: {url_fields}")
+    
+    for field in url_fields:
+        logger.debug(f"  {field}: {file_info.get(field, 'N/A')}")
+    
+    # Log other potentially useful fields
+    other_fields = ['id', 'created', 'timestamp', 'mode', 'editable', 'is_external', 'external_type']
+    for field in other_fields:
+        if field in file_info:
+            logger.debug(f"{field}: {file_info[field]}")
+    
+    logger.debug("=== END FILE INFO DEBUG ===")
+
+
+def get_best_file_url(file_info: dict) -> str:
+    """
+    Get the best URL for downloading a file from Slack.
+    
+    Args:
+        file_info: Slack file object
         
     Returns:
-        File content as bytes
+        Best URL to use for downloading
     """
+    # Debug the file info structure
+    debug_file_info(file_info)
+    
+    # Priority order for URLs to try
+    url_fields = [
+        'url_private_download',  # Best for downloading
+        'url_private',           # Standard private URL
+        'permalink_public',      # Public permalink (if available)
+        'permalink',             # Fallback permalink
+    ]
+    
+    for field in url_fields:
+        if field in file_info and file_info[field]:
+            logger.info(f"Using {field} for file download: {file_info[field]}")
+            return file_info[field]
+    
+    # If none of the preferred fields exist, raise an error
+    available_fields = [k for k in file_info.keys() if 'url' in k.lower()]
+    logger.error(f"No suitable download URL found in file info. Available URL fields: {available_fields}")
+    logger.error(f"Full file info keys: {list(file_info.keys())}")
+    raise Exception(f"No suitable download URL found in file info. Available URL fields: {available_fields}")
+
+
+async def download_slack_image(image_url: str, token: str) -> bytes:
+    """
+    Download an image from Slack using proper authentication and error handling.
+
+    Args:
+        image_url: The URL of the image to download
+        token: Slack bot token for authentication
+
+    Returns:
+        Image content as bytes
+
+    Raises:
+        ValueError: If the URL is empty or invalid
+        requests.RequestException: If the download fails
+    """
+    if not image_url or not isinstance(image_url, str) or not image_url.strip():
+        raise ValueError("image_url must be a non-empty string")
+    
+    if not token:
+        raise ValueError("token must be provided")
+
+    # Prepare headers for Slack API authentication
     headers = {
-        'Authorization': f'Bearer {token}'
+        'Authorization': f'Bearer {token}',
+        'User-Agent': 'ChatHakase-Bot/1.0',
+        'Accept': 'image/*,*/*'
     }
     
-    response = requests.get(file_url, headers=headers)
-    response.raise_for_status()
-    return response.content
+    try:
+        logger.debug(f"Downloading image from: {image_url}")
+        
+        # Use requests with proper error handling and redirect following
+        response = requests.get(
+            image_url.strip(), 
+            headers=headers, 
+            allow_redirects=True, 
+            timeout=30,
+            stream=True  # Stream to handle large files better
+        )
+        
+        # Check for HTTP errors
+        response.raise_for_status()
+        
+        # Get the content
+        content = response.content
+        
+        # Log response details for debugging
+        content_type = response.headers.get('content-type', '').lower()
+        logger.debug(f"Downloaded file: {len(content)} bytes, Content-Type: {content_type}")
+        logger.debug(f"Response status: {response.status_code}")
+        logger.debug(f"Final URL after redirects: {response.url}")
+        
+        # Verify we got actual file content, not an HTML error page
+        if 'text/html' in content_type:
+            # This is likely an error page or redirect, log the content for debugging
+            content_preview = content.decode('utf-8', errors='ignore')[:500] if content else "No content"
+            logger.error(f"Received HTML response instead of image content: {content_preview}")
+            raise Exception(f"Received HTML response instead of image content. Content-Type: {content_type}")
+        
+        # Check if content looks like an image (basic validation)
+        if len(content) < 100:  # Images are typically larger than 100 bytes
+            logger.warning(f"Downloaded content seems too small for an image: {len(content)} bytes")
+        
+        # Check for common image file signatures
+        if content:
+            # JPEG starts with FF D8 FF
+            # PNG starts with 89 50 4E 47
+            # GIF starts with 47 49 46 38
+            # WEBP starts with 52 49 46 46 (RIFF) followed by WEBP
+            if not (content.startswith(b'\xff\xd8\xff') or  # JPEG
+                   content.startswith(b'\x89PNG') or        # PNG
+                   content.startswith(b'GIF8') or           # GIF
+                   (content.startswith(b'RIFF') and b'WEBP' in content[:20])):  # WEBP
+                logger.warning(f"Content doesn't appear to be a valid image format. First 20 bytes: {content[:20]}")
+        
+        return content
+        
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP error downloading image from {image_url}: {e}")
+        logger.error(f"Response status: {e.response.status_code if e.response else 'Unknown'}")
+        logger.error(f"Response headers: {dict(e.response.headers) if e.response else 'Unknown'}")
+        if e.response and e.response.content:
+            error_content = e.response.content.decode('utf-8', errors='ignore')[:500]
+            logger.error(f"Error response content: {error_content}")
+        raise Exception(f"HTTP {e.response.status_code if e.response else 'Unknown'} error downloading image: {str(e)}")
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error downloading image from {image_url}: {e}")
+        raise Exception(f"Failed to download image: {str(e)}")
+        
+    except Exception as e:
+        logger.error(f"Unexpected error downloading image: {e}")
+        raise
 
 
 def encode_image_to_base64(image_bytes: bytes) -> str:
@@ -457,14 +639,23 @@ def resize_image_if_needed(image_bytes: bytes, max_size: int = 2048) -> tuple[by
     Returns:
         Tuple of (resized image bytes, mime_type)
     """
+    # Validate input
+    if not isinstance(image_bytes, bytes):
+        raise ValueError(f"Expected bytes, got {type(image_bytes)}. Content: {str(image_bytes)[:200]}...")
+    
+    if len(image_bytes) == 0:
+        raise ValueError("Received empty image data")
+    
     try:
         image = Image.open(BytesIO(image_bytes))
         logger.debug(f"Processing image: format={image.format}, mode={image.mode}, size={image.size}")
         
         # Determine the original format and MIME type
         original_format = image.format
-        if original_format == 'JPEG':
+        if original_format == 'JPEG' or original_format == 'JPG':
             mime_type = 'image/jpeg'
+            # Always use JPEG as the format name for consistency
+            original_format = 'JPEG'
         elif original_format == 'PNG':
             mime_type = 'image/png'
         elif original_format == 'GIF':
@@ -516,9 +707,14 @@ def resize_image_if_needed(image_bytes: bytes, max_size: int = 2048) -> tuple[by
         return output.getvalue(), mime_type
     except Exception as e:
         logger.warning(f"Error resizing image: {e}, attempting fallback conversion to JPEG")
+        # Log the first few bytes to help debug
+        logger.debug(f"Image bytes preview: {image_bytes[:50] if len(image_bytes) >= 50 else image_bytes}")
+        
         # Fallback: try to convert to JPEG
         try:
             image = Image.open(BytesIO(image_bytes))
+            logger.info(f"Fallback conversion: format={image.format}, mode={image.mode}")
+            
             if image.mode in ('RGBA', 'LA', 'P'):
                 background = Image.new('RGB', image.size, (255, 255, 255))
                 if image.mode == 'P':
@@ -588,8 +784,27 @@ async def process_image_with_text_streaming(content: str, image_files: list, cli
         
         for i, file_info in enumerate(image_files):
             try:
-                # Download image from Slack
-                image_bytes = await download_slack_file(file_info['url_private'], slack_token)
+                # Log file info for debugging
+                logger.info(f"Processing image {i+1}/{len(image_files)}: {file_info.get('name', 'unknown')}")
+                logger.info(f"Image MIME type: {file_info.get('mimetype', 'unknown')}")
+                logger.info(f"Image file extension: {os.path.splitext(file_info.get('name', ''))[1]}")
+                # Get the best URL for downloading the image
+                file_url = get_best_file_url(file_info)
+                logger.info(f"file download url: {file_url}")
+                
+                # Download image from Slack using improved method
+                image_bytes = await download_slack_image(file_url, slack_token)
+                
+                # Debug: Check what we actually got
+                logger.debug(f"Downloaded content type: {type(image_bytes)}")
+                logger.debug(f"Downloaded content length: {len(image_bytes) if hasattr(image_bytes, '__len__') else 'N/A'}")
+                
+                if not isinstance(image_bytes, bytes):
+                    logger.error(f"Expected bytes but got {type(image_bytes)}: {str(image_bytes)[:200]}...")
+                    raise Exception(f"Downloaded content is {type(image_bytes)} instead of bytes")
+                
+                if len(image_bytes) == 0:
+                    raise Exception("Downloaded image is empty (0 bytes)")
                 
                 # Resize if needed and get proper MIME type
                 resized_bytes, mime_type = resize_image_if_needed(image_bytes)
@@ -605,7 +820,7 @@ async def process_image_with_text_streaming(content: str, image_files: list, cli
                     }
                 })
                 
-                logger.info(f"Processed image {i+1}/{len(image_files)}: {file_info.get('name', 'unknown')} ({mime_type})")
+                logger.info(f"Successfully processed image {i+1}/{len(image_files)}: {file_info.get('name', 'unknown')} ({mime_type})")
                 
             except Exception as e:
                 logger.error(f"Error processing image {i+1}: {e}")

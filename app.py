@@ -24,6 +24,72 @@ env_path = Path(".env")
 load_dotenv(env_path)
 app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"))
 
+# Global tracker for recent uploads
+class RecentUploadsTracker:
+    def __init__(self):
+        self.recent_uploads = {}  # user_id -> list of file info
+        self.cleanup_interval = 300  # 5 minutes
+        self.last_cleanup = time.time()
+    
+    def add_upload(self, user_id: str, channel_id: str, file_info: dict):
+        """Add a file upload to the tracker."""
+        if user_id not in self.recent_uploads:
+            self.recent_uploads[user_id] = []
+        
+        file_info['timestamp'] = time.time()
+        file_info['channel_id'] = channel_id
+        self.recent_uploads[user_id].append(file_info)
+        
+        # Keep only the most recent 5 files per user
+        self.recent_uploads[user_id] = self.recent_uploads[user_id][-5:]
+        
+        logger.info(f"Tracked upload: {file_info.get('name', 'unknown')} for user {user_id}")
+        self._cleanup_if_needed()
+    
+    def get_recent_uploads(self, user_id: str, channel_id: str = None, max_age: int = 600) -> list:
+        """Get recent uploads for a user."""
+        self._cleanup_if_needed()
+        
+        if user_id not in self.recent_uploads:
+            return []
+        
+        current_time = time.time()
+        recent_files = []
+        
+        for file_info in self.recent_uploads[user_id]:
+            age = current_time - file_info.get('timestamp', 0)
+            
+            if age <= max_age:
+                if channel_id is None or file_info.get('channel_id') == channel_id:
+                    recent_files.append(file_info)
+        
+        logger.info(f"Retrieved {len(recent_files)} recent uploads for user {user_id}")
+        return recent_files
+    
+    def _cleanup_if_needed(self):
+        """Clean up old entries if needed."""
+        current_time = time.time()
+        
+        if current_time - self.last_cleanup > self.cleanup_interval:
+            self._cleanup_old_entries()
+            self.last_cleanup = current_time
+    
+    def _cleanup_old_entries(self):
+        """Remove old entries from the tracker."""
+        current_time = time.time()
+        max_age = 900  # 15 minutes
+        
+        for user_id in list(self.recent_uploads.keys()):
+            self.recent_uploads[user_id] = [
+                file_info for file_info in self.recent_uploads[user_id]
+                if current_time - file_info.get('timestamp', 0) <= max_age
+            ]
+            
+            if not self.recent_uploads[user_id]:
+                del self.recent_uploads[user_id]
+
+upload_tracker = RecentUploadsTracker()
+
 
 @app.command("/deep")
 async def handle_deep_command(ack, body, client, logger):
@@ -77,10 +143,16 @@ async def handle_deep_command(ack, body, client, logger):
         )
 
 
-# @app.command("/generate")
-# async def handle_generate_command(ack, body, client, logger):
+# @app.command("/image")
+# async def handle_image_command(ack, body, client, logger):
 #     """
-#     Handle /generate slash command for image generation.
+#     Handle /image slash command for both image generation and image processing.
+#
+#     Usage:
+#     - /image <description> - Generate an image with DALL-E
+#     - /image <question> (with recent file upload) - Analyze uploaded images
+#     - /image analyze <question> (with recent file upload) - Explicitly analyze images
+#     - /image generate <description> - Explicitly generate an image
 #     """
 #     await ack()
 #
@@ -94,157 +166,111 @@ async def handle_deep_command(ack, body, client, logger):
 #         response = await client.users_info(user=user_id)
 #         user_name = response["user"].get("real_name", response["user"].get("display_name", "Unknown"))
 #
-#         if not text:
-#             await client.chat_postEphemeral(
+#         # Check for recent uploads using both methods
+#         recent_files = []
+#
+#         # Method 1: Check our upload tracker
+#         tracked_files = upload_tracker.get_recent_uploads(user_id, channel_id, max_age=600)  # 10 minutes
+#         recent_files.extend(tracked_files)
+#
+#         # Method 2: Fallback to message history search (improved)
+#         if not recent_files:
+#             recent_files = await get_recent_uploaded_files_improved(client, channel_id, user_id)
+#
+#         logger.info(f"Found {len(recent_files)} recent files for /image command")
+#
+#         # Parse command text to determine intent
+#         command_parts = text.lower().split()
+#         explicit_mode = None
+#         actual_text = text
+#
+#         if command_parts and command_parts[0] in ['analyze', 'analyse', 'process', 'describe']:
+#             explicit_mode = 'analyze'
+#             actual_text = ' '.join(text.split()[1:])  # Remove the first word
+#         elif command_parts and command_parts[0] in ['generate', 'create', 'make', 'draw']:
+#             explicit_mode = 'generate'
+#             actual_text = ' '.join(text.split()[1:])  # Remove the first word
+#
+#         # Determine operation mode
+#         if explicit_mode == 'analyze' or (recent_files and not explicit_mode):
+#             # Image analysis mode
+#             if not recent_files:
+#                 await client.chat_postEphemeral(
+#                     channel=channel_id,
+#                     user=user_id,
+#                     text="🖼️ No recent images found. Please upload an image file and then use the `/image` command.\n\n" +
+#                          "**Tips:**\n" +
+#                          "• Upload an image first, then run `/image <question>` within 10 minutes\n" +
+#                          "• Or mention me directly with an image: `@ChatHakase analyze this image`\n\n" +
+#                          "**Examples:**\n" +
+#                          "• Upload an image, then: `/image What do you see in this image?`\n" +
+#                          "• Upload an image, then: `/image analyze the contents of this screenshot`"
+#                 )
+#                 return
+#
+#             if not actual_text.strip():
+#                 actual_text = "Please analyze this image and describe what you see."
+#
+#             # Post initial message to start the thread
+#             initial_response = await client.chat_postMessage(
 #                 channel=channel_id,
-#                 user=user_id,
-#                 text="Please provide a description after the /generate command. Example: `/generate a sunset over mountains`"
+#                 text=f"🖼️ Analyzing {len(recent_files)} uploaded image(s): {actual_text}"
 #             )
-#             return
 #
-#         # Post initial message to start the thread
-#         initial_response = await client.chat_postMessage(
-#             channel=channel_id,
-#             text=f"🎨 Generating image: {text}"
-#         )
+#             thread_ts = initial_response["ts"]
 #
-#         thread_ts = initial_response["ts"]
+#             # Process image analysis
+#             await process_image_with_text_streaming(
+#                 content=actual_text,
+#                 image_files=recent_files,
+#                 client=client,
+#                 channel=channel_id,
+#                 timestamp=thread_ts,
+#                 user_id=user_id,
+#                 user_name=user_name
+#             )
 #
-#         # Process image generation
-#         await generate_image_streaming(
-#             prompt=text,
-#             client=client,
-#             channel=channel_id,
-#             timestamp=thread_ts,
-#             user_id=user_id,
-#             user_name=user_name
-#         )
+#         else:
+#             # Image generation mode (default)
+#             if not actual_text.strip():
+#                 await client.chat_postEphemeral(
+#                     channel=channel_id,
+#                     user=user_id,
+#                     text="🎨 Please provide a description for image generation.\n\n" +
+#                          "**Examples:**\n" +
+#                          "• `/image a cute cat wearing a space helmet`\n" +
+#                          "• `/image generate a sunset over mountains with a lake`\n" +
+#                          "• `/image create a futuristic cityscape at night`\n\n" +
+#                          "**For image analysis:**\n" +
+#                          "• Upload an image first, then use `/image analyze <question>`"
+#                 )
+#                 return
+#
+#             # Post initial message to start the thread
+#             initial_response = await client.chat_postMessage(
+#                 channel=channel_id,
+#                 text=f"🎨 Generating image: {actual_text}"
+#             )
+#
+#             thread_ts = initial_response["ts"]
+#
+#             # Process image generation
+#             await generate_image_streaming(
+#                 prompt=actual_text,
+#                 client=client,
+#                 channel=channel_id,
+#                 timestamp=thread_ts,
+#                 user_id=user_id,
+#                 user_name=user_name
+#             )
 #
 #     except Exception as e:
-#         logger.error(f"Error handling /generate command: {e}")
+#         logger.error(f"Error handling /image command: {e}")
 #         await client.chat_postEphemeral(
 #             channel=body["channel_id"],
 #             user=body["user_id"],
-#             text=f"Sorry, I encountered an error generating the image: {str(e)}"
+#             text=f"Sorry, I encountered an error processing your image request: {str(e)}"
 #         )
-
-
-@app.command("/image")
-async def handle_image_command(ack, body, client, logger):
-    """
-    Handle /image slash command for both image generation and image processing.
-    
-    Usage:
-    - /image <description> - Generate an image with DALL-E
-    - /image <question> (with file upload) - Analyze uploaded images
-    - /image analyze <question> (with file upload) - Explicitly analyze images
-    - /image generate <description> - Explicitly generate an image
-    """
-    await ack()
-    
-    try:
-        # Get command details
-        user_id = body["user_id"]
-        channel_id = body["channel_id"]
-        text = body.get("text", "").strip()
-        
-        # Get user info
-        response = await client.users_info(user=user_id)
-        user_name = response["user"].get("real_name", response["user"].get("display_name", "Unknown"))
-        
-        # Check if there are any files in the recent messages (look back a few messages)
-        # This is a workaround since slash commands don't directly include file uploads
-        recent_files = await get_recent_uploaded_files(client, channel_id, user_id)
-        
-        # Parse command text to determine intent
-        command_parts = text.lower().split()
-        explicit_mode = None
-        actual_text = text
-
-        if command_parts and command_parts[0] in ['analyze', 'analyse', 'process', 'describe']:
-            explicit_mode = 'analyze'
-            actual_text = ' '.join(text.split()[1:])  # Remove the first word
-        if command_parts and command_parts[0] in ['generate', 'create', 'make', 'draw']:
-            explicit_mode = 'generate'
-            actual_text = ' '.join(text.split()[1:])  # Remove the first word
-
-        # Determine operation mode
-        if explicit_mode == 'analyze' or (recent_files and not explicit_mode):
-            # Image analysis mode
-            if not recent_files:
-                await client.chat_postEphemeral(
-                    channel=channel_id,
-                    user=user_id,
-                    text="🖼️ No recent images found. Please upload an image file and then use the `/image` command.\n\n" +
-                         "**Examples:**\n" +
-                         "• Upload an image, then: `/image What do you see in this image?`\n" +
-                         "• Upload an image, then: `/image analyze the contents of this screenshot`"
-                )
-                return
-            
-            if not actual_text.strip():
-                actual_text = "Please analyze this image and describe what you see."
-            
-            # Post initial message to start the thread
-            initial_response = await client.chat_postMessage(
-                channel=channel_id,
-                text=f"🖼️ Analyzing uploaded image(s): {actual_text}"
-            )
-            
-            thread_ts = initial_response["ts"]
-            
-            # Process image analysis
-            await process_image_with_text_streaming(
-                content=actual_text,
-                image_files=recent_files,
-                client=client,
-                channel=channel_id,
-                timestamp=thread_ts,
-                user_id=user_id,
-                user_name=user_name
-            )
-            
-        else:
-            # Image generation mode (default)
-            if not actual_text.strip():
-                await client.chat_postEphemeral(
-                    channel=channel_id,
-                    user=user_id,
-                    text="🎨 Please provide a description for image generation.\n\n" +
-                         "**Examples:**\n" +
-                         "• `/image a cute cat wearing a space helmet`\n" +
-                         "• `/image generate a sunset over mountains with a lake`\n" +
-                         "• `/image create a futuristic cityscape at night`\n\n" +
-                         "**For image analysis:**\n" +
-                         "• Upload an image first, then use `/image analyze <question>`"
-                )
-                return
-            
-            # Post initial message to start the thread
-            initial_response = await client.chat_postMessage(
-                channel=channel_id,
-                text=f"🎨 Generating image: {actual_text}"
-            )
-            
-            thread_ts = initial_response["ts"]
-            
-            # Process image generation
-            await generate_image_streaming(
-                prompt=actual_text,
-                client=client,
-                channel=channel_id,
-                timestamp=thread_ts,
-                user_id=user_id,
-                user_name=user_name
-            )
-        
-    except Exception as e:
-        logger.error(f"Error handling /image command: {e}")
-        await client.chat_postEphemeral(
-            channel=body["channel_id"],
-            user=body["user_id"],
-            text=f"Sorry, I encountered an error processing your image request: {str(e)}"
-        )
 
 
 @app.event("app_mention")
@@ -286,42 +312,7 @@ async def handle_mentions(event, client, payload):
                 name="eyes",
             )
             return
-        
-        # # Handle /deep command for deep research
-        # if text.strip().lower().startswith('/deep'):
-        #     deep_query = text[5:].strip()  # Remove '/deep' prefix
-        #     if not deep_query:
-        #         await client.chat_postMessage(
-        #             channel=event["channel"],
-        #             text="Please provide a query after the /deep command. Example: `/deep What are the latest developments in quantum computing?`",
-        #             thread_ts=event.get('thread_ts', event['ts'])
-        #         )
-        #         await client.reactions_remove(
-        #             channel=event["channel"],
-        #             timestamp=event["ts"],
-        #             name="eyes",
-        #         )
-        #         return
-        #
-        #     # Process with deep research
-        #     from assistant import process_deep_research_streaming
-        #     await process_deep_research_streaming(
-        #         content=deep_query,
-        #         client=client,
-        #         channel=event["channel"],
-        #         timestamp=event.get('thread_ts', event['ts']),
-        #         user_id=user_id,
-        #         user_name=user_name
-        #     )
-        #
-        #     # Remove eyes reaction when done
-        #     await client.reactions_remove(
-        #         channel=event["channel"],
-        #         timestamp=event["ts"],
-        #         name="eyes",
-        #     )
-        #     return
-        
+
         # Handle /generate or /image command for image generation
         if text.strip().lower().startswith(('/generate', '/image')):
             # Extract command and prompt
@@ -329,7 +320,7 @@ async def handle_mentions(event, client, payload):
                 prompt = text[9:].strip()  # Remove '/generate' prefix
             else:
                 prompt = text[6:].strip()  # Remove '/image' prefix
-                
+
             if not prompt:
                 await client.chat_postMessage(
                     channel=event["channel"],
@@ -352,7 +343,7 @@ async def handle_mentions(event, client, payload):
                 user_id=user_id,
                 user_name=user_name
             )
-            
+
             # Remove eyes reaction when done
             await client.reactions_remove(
                 channel=event["channel"],
@@ -360,23 +351,25 @@ async def handle_mentions(event, client, payload):
                 name="eyes",
             )
             return
-        
-        # Check for uploaded files (images)
+
+        # Check for uploaded files (images) and track them
         files = event.get('files', [])
         image_files = []
-        
+
         for file in files:
             # Check if file is an image
             if file.get('mimetype', '').startswith('image/'):
                 image_files.append(file)
-        
+                # Track this upload for later /image commands
+                upload_tracker.add_upload(user_id, event["channel"], file)
+
         # Determine thread timestamp
         thread_ts = event.get('thread_ts', event['ts'])
-        
+
         # Handle image analysis if images are present
         if image_files:
             logger.info(f"Processing {len(image_files)} images from {user_name} in thread {thread_ts}")
-            
+
             await process_image_with_text_streaming(
                 content=text,
                 image_files=image_files,
@@ -415,7 +408,7 @@ async def handle_mentions(event, client, payload):
             user_id=user_id,
             user_name=user_name
         )
-        
+
         # Remove eyes reaction when done
         await client.reactions_remove(
             channel=event["channel"],
@@ -435,20 +428,13 @@ async def handle_mentions(event, client, payload):
             logger.error(f"Error posting error message: {post_error}")
 
 
-async def get_recent_uploaded_files(client, channel_id: str, user_id: str, limit: int = 10) -> list:
+async def get_recent_uploaded_files_improved(client, channel_id: str, user_id: str, limit: int = 20, time_window: int = 600) -> list:
     """
-    Get recent uploaded image files from the channel by the user.
-    
-    Args:
-        client: Slack client
-        channel_id: Channel to search in
-        user_id: User who uploaded the files
-        limit: Number of recent messages to check
-    
-    Returns:
-        List of image file objects
+    Improved function to get recent uploaded image files from the channel by the user.
     """
     try:
+        logger.info(f"Searching for recent files by user {user_id} in channel {channel_id}")
+        
         # Get recent messages from the channel
         response = await client.conversations_history(
             channel=channel_id,
@@ -456,20 +442,34 @@ async def get_recent_uploaded_files(client, channel_id: str, user_id: str, limit
         )
         
         image_files = []
+        current_time = time.time()
         
         # Look through recent messages for files uploaded by this user
         for message in response.get('messages', []):
+            message_time = float(message.get('ts', 0))
+            time_diff = current_time - message_time
+            
             # Check if message is from the same user and has files
             if (message.get('user') == user_id and 
                 message.get('files') and 
-                # Only consider files from the last 5 minutes to avoid old uploads
-                time.time() - float(message.get('ts', 0)) < 300):
+                time_diff < time_window):  # Extended time window
+                
+                logger.info(f"Found message with files from target user (age: {time_diff:.1f}s)")
                 
                 for file in message['files']:
                     # Check if file is an image
                     if file.get('mimetype', '').startswith('image/'):
-                        image_files.append(file)
+                        # Add additional metadata for debugging
+                        file_info = {
+                            **file,
+                            'message_ts': message.get('ts'),
+                            'upload_age_seconds': time_diff,
+                            'message_text': message.get('text', '')
+                        }
+                        image_files.append(file_info)
+                        logger.info(f"Found image file: {file.get('name', 'unknown')} ({file.get('mimetype', 'unknown')})")
         
+        logger.info(f"Found {len(image_files)} recent image files via message history")
         return image_files
         
     except Exception as e:
@@ -518,6 +518,30 @@ async def handle_special_commands(text: str, client, event, user_name: str) -> b
         )
         return True
     
+    # Debug uploads command (new)
+    elif text_lower in ['debug uploads', 'show uploads', 'recent uploads']:
+        user_id = event['user']
+        tracked_files = upload_tracker.get_recent_uploads(user_id, channel, max_age=900)
+        
+        if tracked_files:
+            debug_info = f"🔍 **Recent Uploads Debug**\n\n"
+            for i, file_info in enumerate(tracked_files):
+                age = time.time() - file_info.get('timestamp', 0)
+                debug_info += f"**File {i+1}:**\n"
+                debug_info += f"• Name: {file_info.get('name', 'unknown')}\n"
+                debug_info += f"• Type: {file_info.get('mimetype', 'unknown')}\n"
+                debug_info += f"• Age: {age:.1f} seconds\n"
+                debug_info += f"• Channel: {file_info.get('channel_id', 'unknown')}\n\n"
+        else:
+            debug_info = "🔍 **Recent Uploads Debug**\n\nNo recent uploads found for your user ID."
+        
+        await client.chat_postMessage(
+            channel=channel,
+            text=debug_info,
+            thread_ts=thread_ts
+        )
+        return True
+    
     # Help command
     elif text_lower in ['help', 'commands']:
         help_text = """
@@ -539,6 +563,7 @@ async def handle_special_commands(text: str, client, event, user_name: str) -> b
 • `session info` - Show current session details
 • `clear session` - Reset conversation history for this thread
 • `all sessions` - Show all active sessions (admin)
+• `debug uploads` - Show recent file uploads (debug)
 • `help` - Show this help message
 
 **Image Command Examples:**
@@ -560,6 +585,11 @@ async def handle_special_commands(text: str, client, event, user_name: str) -> b
 🔬 Deep research mode for complex queries
 🖼️ Image analysis and vision capabilities
 🎨 AI image generation with DALL-E
+
+**Tips for Image Analysis:**
+• Upload your image first, then use `/image` within 10 minutes
+• Use `debug uploads` to see if your files were detected
+• Mention me directly with images for immediate analysis
         """
         await client.chat_postMessage(
             channel=channel,
@@ -575,7 +605,7 @@ async def main():
     """
     Main async function to start the app.
     """
-    logger.info("Starting ChatHakase with session management...")
+    logger.info("Starting ChatHakase with improved image upload detection...")
     handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     await handler.start_async()
 
