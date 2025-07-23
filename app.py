@@ -15,14 +15,14 @@ from assistant import (
     get_all_sessions_info
 )
 import logging
-import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 env_path = Path(".env")
 load_dotenv(env_path)
-app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"))
+app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
+
 
 # Global tracker for recent uploads
 class RecentUploadsTracker:
