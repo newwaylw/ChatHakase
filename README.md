@@ -1,5 +1,5 @@
 # ChatHakase
-A chatbot based on Slack API and OpenAI API with streaming responses and conversation memory
+A chatbot based on Slack API and OpenAI API with streaming responses, conversation memory, and image capabilities
 
 ## Features
 - 🧵 **Thread-based Chat Sessions**: Each Slack thread maintains its own conversation context
@@ -10,6 +10,8 @@ A chatbot based on Slack API and OpenAI API with streaming responses and convers
 - 📊 **Admin Commands**: Session info, clearing, and statistics
 - 🚨 **Error Handling**: Robust error handling and fallback mechanisms
 - 🔬 **Deep Research Mode**: Advanced AI analysis using OpenAI's deep research model
+- 🖼️ **Image Analysis**: Upload and analyze images using GPT-4 Vision
+- 🎨 **Image Generation**: Generate images using DALL-E 3
 
 ## How Chat Sessions Work
 - **New Conversation**: Mention the bot or send a DM to start a new chat session
@@ -51,6 +53,23 @@ What are decorators?
 > [Comprehensive analysis with detailed research findings...]
 ```
 
+### Image Analysis
+```
+[Upload an image with text]
+@ChatHakase What do you see in this image?
+> 🖼️ [Analyzes the uploaded image and provides detailed description]
+```
+
+### Image Generation
+```
+@ChatHakase /generate a sunset over mountains with a lake in the foreground
+> 🎨 Generating image...
+> [Posts generated image]
+
+@ChatHakase /image a cute robot assistant
+> 🎨 [Generates and posts the requested image]
+```
+
 ### Special Commands
 - `session info` - Show current session details
 - `clear session` - Reset conversation history for this thread
@@ -61,14 +80,17 @@ What are decorators?
 - **Session Management**: Run `python test_sessions.py` to test session functionality
 - **OpenAI Streaming**: Run `python test_streaming.py` to test OpenAI streaming without Slack
 - **Deep Research**: Run `python test_deep_research.py` to test deep research functionality
+- **Image Features**: Run `python test_image_features.py` to test image processing and generation
+- **Improved Image Command**: Run `python test_improved_image_command.py` to test the enhanced /image command
 
 ## Architecture
 
 ### Core Components
-- **`app.py`**: Main Slack application with event handlers
-- **`assistant.py`**: OpenAI integration with streaming responses
+- **`app.py`**: Main Slack application with event handlers and image support
+- **`assistant.py`**: OpenAI integration with streaming responses, vision, and image generation
 - **`session_manager.py`**: Chat session management and conversation memory
 - **`test_sessions.py`**: Test suite for session functionality
+- **`test_image_features.py`**: Test suite for image functionality
 
 ### How Streaming Works
 - The bot posts an initial "thinking" message
@@ -77,11 +99,43 @@ What are decorators?
 - Finalizes with the complete response
 - Stores the conversation in session memory
 
+### Image Processing
+- **Vision Analysis**: Automatically detects uploaded images and analyzes them using GPT-4 Vision
+- **Image Resizing**: Automatically resizes large images to meet OpenAI API requirements
+- **Base64 Encoding**: Converts images to base64 format for API transmission
+- **Error Handling**: Robust error handling for image processing failures
+
+### Image Generation
+- **DALL-E 3**: Uses OpenAI's latest image generation model
+- **Quality Options**: Supports both standard and HD quality generation
+- **Size Options**: Supports multiple image sizes (1024x1024, 1792x1024, 1024x1792)
+- **Prompt Enhancement**: DALL-E 3 automatically enhances prompts for better results
+
 ### Session Management
 - Sessions are identified by `channel_id + thread_timestamp`
-- Each session maintains conversation history
+- Each session maintains conversation history including image interactions
 - OpenAI receives full context for better responses
 - Automatic cleanup prevents memory leaks
+
+## New Image Commands
+
+### Image Generation Commands
+- `/image <description>` - Smart image command (generates or analyzes based on context)
+- `/image generate <description>` - Explicitly generate an image using DALL-E 3
+- `/image create <description>` - Alternative explicit generation command
+- `/generate <description>` - Legacy generation command
+- Examples:
+  - `/image a futuristic cityscape at night`
+  - `/image generate a cute cat wearing a space helmet`
+
+### Image Analysis Commands  
+- Upload any image file to Slack and mention the bot
+- `/image <question>` - Analyze recently uploaded images (auto-detected)
+- `/image analyze <question>` - Explicitly analyze uploaded images
+- `/image describe <question>` - Alternative explicit analysis command
+- Examples:
+  - Upload image → `/image what do you see in this screenshot?`
+  - Upload diagram → `/image analyze explain this flowchart`
 
 ## Documentation
 - **[Chat Sessions Guide](CHAT_SESSIONS.md)**: Detailed documentation about session functionality
@@ -92,15 +146,16 @@ What are decorators?
 ### Project Structure
 ```
 ChatHakase/
-├── app.py                 # Main Slack application
-├── assistant.py           # OpenAI integration
-├── session_manager.py     # Session management
-├── test_sessions.py       # Session tests
-├── test_streaming.py      # Streaming tests
-├── requirements.txt       # Dependencies
-├── .env.example          # Environment template
-├── README.md             # This file
-├── CHAT_SESSIONS.md      # Session documentation
+├── app.py                    # Main Slack application with image support
+├── assistant.py              # OpenAI integration with vision and generation
+├── session_manager.py        # Session management
+├── test_sessions.py          # Session tests
+├── test_streaming.py         # Streaming tests
+├── test_image_features.py    # Image functionality tests
+├── requirements.txt          # Dependencies (updated with image libraries)
+├── .env.example             # Environment template
+├── README.md                # This file
+├── CHAT_SESSIONS.md         # Session documentation
 └── STREAMING_IMPROVEMENTS.md
 ```
 
@@ -110,6 +165,9 @@ ChatHakase/
 - **Token Management**: Limits message history to stay within OpenAI token limits
 - **Error Recovery**: Graceful handling of API failures and rate limits
 - **Memory Efficiency**: Automatic cleanup of expired sessions
+- **Image Processing**: Automatic image detection, resizing, and encoding
+- **Vision Integration**: Seamless integration with GPT-4 Vision for image analysis
+- **Image Generation**: DALL-E 3 integration with quality and size options
 
 ## Future Enhancements
 - Persistent storage for conversation history
@@ -117,3 +175,6 @@ ChatHakase/
 - User-specific session limits
 - Analytics and usage tracking
 - Integration with other AI models
+- Image editing and manipulation features
+- Batch image processing
+- Custom image generation styles
