@@ -143,134 +143,67 @@ async def handle_deep_command(ack, body, client, logger):
         )
 
 
-# @app.command("/image")
-# async def handle_image_command(ack, body, client, logger):
-#     """
-#     Handle /image slash command for both image generation and image processing.
-#
-#     Usage:
-#     - /image <description> - Generate an image with DALL-E
-#     - /image <question> (with recent file upload) - Analyze uploaded images
-#     - /image analyze <question> (with recent file upload) - Explicitly analyze images
-#     - /image generate <description> - Explicitly generate an image
-#     """
-#     await ack()
-#
-#     try:
-#         # Get command details
-#         user_id = body["user_id"]
-#         channel_id = body["channel_id"]
-#         text = body.get("text", "").strip()
-#
-#         # Get user info
-#         response = await client.users_info(user=user_id)
-#         user_name = response["user"].get("real_name", response["user"].get("display_name", "Unknown"))
-#
-#         # Check for recent uploads using both methods
-#         recent_files = []
-#
-#         # Method 1: Check our upload tracker
-#         tracked_files = upload_tracker.get_recent_uploads(user_id, channel_id, max_age=600)  # 10 minutes
-#         recent_files.extend(tracked_files)
-#
-#         # Method 2: Fallback to message history search (improved)
-#         if not recent_files:
-#             recent_files = await get_recent_uploaded_files_improved(client, channel_id, user_id)
-#
-#         logger.info(f"Found {len(recent_files)} recent files for /image command")
-#
-#         # Parse command text to determine intent
-#         command_parts = text.lower().split()
-#         explicit_mode = None
-#         actual_text = text
-#
-#         if command_parts and command_parts[0] in ['analyze', 'analyse', 'process', 'describe']:
-#             explicit_mode = 'analyze'
-#             actual_text = ' '.join(text.split()[1:])  # Remove the first word
-#         elif command_parts and command_parts[0] in ['generate', 'create', 'make', 'draw']:
-#             explicit_mode = 'generate'
-#             actual_text = ' '.join(text.split()[1:])  # Remove the first word
-#
-#         # Determine operation mode
-#         if explicit_mode == 'analyze' or (recent_files and not explicit_mode):
-#             # Image analysis mode
-#             if not recent_files:
-#                 await client.chat_postEphemeral(
-#                     channel=channel_id,
-#                     user=user_id,
-#                     text="🖼️ No recent images found. Please upload an image file and then use the `/image` command.\n\n" +
-#                          "**Tips:**\n" +
-#                          "• Upload an image first, then run `/image <question>` within 10 minutes\n" +
-#                          "• Or mention me directly with an image: `@ChatHakase analyze this image`\n\n" +
-#                          "**Examples:**\n" +
-#                          "• Upload an image, then: `/image What do you see in this image?`\n" +
-#                          "• Upload an image, then: `/image analyze the contents of this screenshot`"
-#                 )
-#                 return
-#
-#             if not actual_text.strip():
-#                 actual_text = "Please analyze this image and describe what you see."
-#
-#             # Post initial message to start the thread
-#             initial_response = await client.chat_postMessage(
-#                 channel=channel_id,
-#                 text=f"🖼️ Analyzing {len(recent_files)} uploaded image(s): {actual_text}"
-#             )
-#
-#             thread_ts = initial_response["ts"]
-#
-#             # Process image analysis
-#             await process_image_with_text_streaming(
-#                 content=actual_text,
-#                 image_files=recent_files,
-#                 client=client,
-#                 channel=channel_id,
-#                 timestamp=thread_ts,
-#                 user_id=user_id,
-#                 user_name=user_name
-#             )
-#
-#         else:
-#             # Image generation mode (default)
-#             if not actual_text.strip():
-#                 await client.chat_postEphemeral(
-#                     channel=channel_id,
-#                     user=user_id,
-#                     text="🎨 Please provide a description for image generation.\n\n" +
-#                          "**Examples:**\n" +
-#                          "• `/image a cute cat wearing a space helmet`\n" +
-#                          "• `/image generate a sunset over mountains with a lake`\n" +
-#                          "• `/image create a futuristic cityscape at night`\n\n" +
-#                          "**For image analysis:**\n" +
-#                          "• Upload an image first, then use `/image analyze <question>`"
-#                 )
-#                 return
-#
-#             # Post initial message to start the thread
-#             initial_response = await client.chat_postMessage(
-#                 channel=channel_id,
-#                 text=f"🎨 Generating image: {actual_text}"
-#             )
-#
-#             thread_ts = initial_response["ts"]
-#
-#             # Process image generation
-#             await generate_image_streaming(
-#                 prompt=actual_text,
-#                 client=client,
-#                 channel=channel_id,
-#                 timestamp=thread_ts,
-#                 user_id=user_id,
-#                 user_name=user_name
-#             )
-#
-#     except Exception as e:
-#         logger.error(f"Error handling /image command: {e}")
-#         await client.chat_postEphemeral(
-#             channel=body["channel_id"],
-#             user=body["user_id"],
-#             text=f"Sorry, I encountered an error processing your image request: {str(e)}"
-#         )
+@app.command("/image")
+async def handle_image_command(ack, body, client, logger):
+    """
+    Handle /image slash command for both image generation and image processing.
+
+    Usage:
+    - /image <description> - Generate an image with DALL-E
+    - /image <question> (with recent file upload) - Analyze uploaded images
+    - /image analyze <question> (with recent file upload) - Explicitly analyze images
+    - /image generate <description> - Explicitly generate an image
+    """
+    await ack()
+
+    try:
+        # Get command details
+        user_id = body["user_id"]
+        channel_id = body["channel_id"]
+        text = body.get("text", "").strip()
+
+        # Get user info
+        response = await client.users_info(user=user_id)
+        user_name = response["user"].get("real_name", response["user"].get("display_name", "Unknown"))
+
+        # Image generation mode (default)
+        if not text:
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="🎨 Please provide a description for image generation.\n\n" +
+                     "**Examples:**\n" +
+                     "• `/image a cute cat wearing a space helmet`\n" +
+                     "• `/image generate a sunset over mountains with a lake`\n" +
+                     "• `/image create a futuristic cityscape at night`\n\n"
+            )
+            return
+
+        # Post initial message to start the thread
+        initial_response = await client.chat_postMessage(
+            channel=channel_id,
+            text=f"🎨 Generating image: {text}"
+        )
+
+        thread_ts = initial_response["ts"]
+
+        # Process image generation
+        await generate_image_streaming(
+            prompt=text,
+            client=client,
+            channel=channel_id,
+            timestamp=thread_ts,
+            user_id=user_id,
+            user_name=user_name
+        )
+
+    except Exception as e:
+        logger.error(f"Error handling /image command: {e}")
+        await client.chat_postEphemeral(
+            channel=body["channel_id"],
+            user=body["user_id"],
+            text=f"Sorry, I encountered an error processing your image request: {str(e)}"
+        )
 
 
 @app.event("app_mention")
@@ -313,8 +246,44 @@ async def handle_mentions(event, client, payload):
             )
             return
 
+        # Check for uploaded files (images) and track them
+        files = event.get('files', [])
+        image_files = []
+
+        for file in files:
+            # Check if file is an image
+            if file.get('mimetype', '').startswith('image/'):
+                image_files.append(file)
+                # Track this upload for later /image commands
+                upload_tracker.add_upload(user_id, event["channel"], file)
+
+        # Determine thread timestamp
+        thread_ts = event.get('thread_ts', event['ts'])
+        # image file present, assume we are dealing with image analysis requests
+        if image_files:
+            logger.info(f"image file {len(image_files)} present from {user_name} in thread {thread_ts}")
+
+            await process_image_with_text_streaming(
+                content=text,
+                image_files=image_files,
+                client=client,
+                channel=event["channel"],
+                timestamp=thread_ts,
+                user_id=user_id,
+                user_name=user_name
+            )
+
+            # Remove eyes reaction when done
+            await client.reactions_remove(
+                channel=event["channel"],
+                timestamp=event["ts"],
+                name="eyes",
+            )
+            return
+
+
         # Handle /generate or /image command for image generation
-        if text.strip().lower().startswith(('/generate', '/image')):
+        elif text.strip().lower().startswith(('/generate', '/image')):
             # Extract command and prompt
             if text.strip().lower().startswith('/generate'):
                 prompt = text[9:].strip()  # Remove '/generate' prefix
@@ -352,41 +321,41 @@ async def handle_mentions(event, client, payload):
             )
             return
 
-        # Check for uploaded files (images) and track them
-        files = event.get('files', [])
-        image_files = []
-
-        for file in files:
-            # Check if file is an image
-            if file.get('mimetype', '').startswith('image/'):
-                image_files.append(file)
-                # Track this upload for later /image commands
-                upload_tracker.add_upload(user_id, event["channel"], file)
-
-        # Determine thread timestamp
-        thread_ts = event.get('thread_ts', event['ts'])
+        # # Check for uploaded files (images) and track them
+        # files = event.get('files', [])
+        # image_files = []
+        #
+        # for file in files:
+        #     # Check if file is an image
+        #     if file.get('mimetype', '').startswith('image/'):
+        #         image_files.append(file)
+        #         # Track this upload for later /image commands
+        #         upload_tracker.add_upload(user_id, event["channel"], file)
+        #
+        # # Determine thread timestamp
+        # thread_ts = event.get('thread_ts', event['ts'])
 
         # Handle image analysis if images are present
-        if image_files:
-            logger.info(f"Processing {len(image_files)} images from {user_name} in thread {thread_ts}")
+        # if image_files:
+        #     logger.info(f"Processing {len(image_files)} images from {user_name} in thread {thread_ts}")
 
-            await process_image_with_text_streaming(
-                content=text,
-                image_files=image_files,
-                client=client,
-                channel=event["channel"],
-                timestamp=thread_ts,
-                user_id=user_id,
-                user_name=user_name
-            )
-            
-            # Remove eyes reaction when done
-            await client.reactions_remove(
-                channel=event["channel"],
-                timestamp=event["ts"],
-                name="eyes",
-            )
-            return
+            # await process_image_with_text_streaming(
+            #     content=text,
+            #     image_files=image_files,
+            #     client=client,
+            #     channel=event["channel"],
+            #     timestamp=thread_ts,
+            #     user_id=user_id,
+            #     user_name=user_name
+            # )
+            #
+            # # Remove eyes reaction when done
+            # await client.reactions_remove(
+            #     channel=event["channel"],
+            #     timestamp=event["ts"],
+            #     name="eyes",
+            # )
+            # return
         
         # Skip empty messages (no text and no images)
         if not text.strip():
